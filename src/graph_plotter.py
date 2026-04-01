@@ -28,7 +28,9 @@ def plot_single_angle(
         return
 
     time = df.loc[series.index, "time_sec"]
-
+    if "time_sec" not in df.columns:
+        raise ValueError("DataFrame must contain 'time_sec' column")
+    
     max_val = series.max()
     min_val = series.min()
     max_t = time[series.idxmax()]

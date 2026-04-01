@@ -69,7 +69,7 @@ def compute_alpha(landmarks, side: str) -> float:
 def compute_beta(landmarks, side: str) -> float:
     """
     beta: KNEE -> HIP -> SHOULDER (꼭짓점: HIP).
-    고관절 각도.
+    pose-estimation 기반 근사 각도
     """
     knee     = get_coord(landmarks, side, "KNEE")
     hip      = get_coord(landmarks, side, "HIP")
@@ -80,7 +80,7 @@ def compute_beta(landmarks, side: str) -> float:
 def compute_gamma(landmarks, side: str) -> float:
     """
     gamma: ANKLE -> KNEE -> HIP (꼭짓점: KNEE).
-    무릎 굴곡 각도.
+    무릎 내부각(0-180).
     """
     ankle = get_coord(landmarks, side, "ANKLE")
     knee  = get_coord(landmarks, side, "KNEE")
@@ -95,6 +95,7 @@ def compute_all_angles(landmarks) -> dict:
     """
     side = detect_side(landmarks)
     return {
+        "side": side,
         "alpha": compute_alpha(landmarks, side),
         "beta":  compute_beta(landmarks, side),
         "gamma": compute_gamma(landmarks, side),

@@ -1,27 +1,3 @@
-"""
-글루트 브릿지 영상 분석 파이프라인
-
-입력 구조:
-    input/
-        gb01.mp4
-        gb02.mp4
-        ...
-
-출력 구조:
-    output/
-        gb01/
-            gb01_angles.csv
-            graphs/
-                gb01_alpha.png
-                gb01_beta.png
-                gb01_gamma.png
-        ...
-
-실행:
-    python scripts/run_pipeline.py
-    python scripts/run_pipeline.py --input input --output output --complexity 1
-"""
-
 import argparse
 import sys
 from pathlib import Path
@@ -34,6 +10,15 @@ from src.video_analyzer import analyze_video
 from src.graph_plotter import plot_single_angle
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+
+
+def is_done(video_path: Path, output_dir: Path) -> bool:
+    """해당 영상의 결과물(CSV + 그래프 3개)이 이미 존재하는지 확인."""
+    sample_id = video_path.stem
+    out_sample = output_dir / sample_id
+    csv = out_sample / f"{sample_id}_angles.csv"
+    graphs = [out_sample / "graphs" / f"{sample_id}_{angle}.png" for angle in ["alpha", "beta", "gamma"]]
+    return csv.exists() and all(g.exists() for g in graphs)
 
 
 def process_video(
@@ -70,6 +55,8 @@ def main():
                         help="출력 디렉토리 (기본값: output)")
     parser.add_argument("--complexity", type=int, default=1, choices=[0, 1, 2],
                         help="MediaPipe 모델 복잡도 (0=빠름, 1=기본, 2=정확, 기본값: 1)")
+    parser.add_argument("--only-new", action="store_true",
+                        help="결과물이 이미 있는 영상은 건너뜀")
     args = parser.parse_args()
 
     input_dir = PROJECT_ROOT / args.input
@@ -96,6 +83,9 @@ def main():
     print(f"모델 복잡도: {args.complexity}")
 
     for video_path in video_files:
+        if args.only_new and is_done(video_path, output_dir):
+            print(f"\n[{video_path.stem}] 결과물 존재 — 건너뜀")
+            continue
         process_video(video_path, output_dir, args.complexity)
 
     print("\n전체 처리 완료!")
