@@ -12,31 +12,29 @@ from src.graph_plotter import plot_single_angle
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 
 
-def is_done(video_path: Path, output_dir: Path) -> bool:
+def is_done(video_path: Path, out_video_dir: Path) -> bool:
     """해당 영상의 결과물(CSV + 그래프 3개)이 이미 존재하는지 확인."""
     sample_id = video_path.stem
-    out_sample = output_dir / sample_id
-    csv = out_sample / f"{sample_id}_angles.csv"
-    graphs = [out_sample / "graphs" / f"{sample_id}_{angle}.png" for angle in ["alpha", "beta", "gamma"]]
+    csv = out_video_dir / f"{sample_id}_angles.csv"
+    graphs = [out_video_dir / "graphs" / f"{sample_id}_{angle}.png" for angle in ["alpha", "beta", "gamma"]]
     return csv.exists() and all(g.exists() for g in graphs)
 
 
 def process_video(
     video_path: Path,
-    output_dir: Path,
+    out_video_dir: Path,
     model_complexity: int,
 ) -> None:
     sample_id = video_path.stem
     print(f"\n[{sample_id}] {video_path.name} 분석 중...")
 
-    out_sample = output_dir / sample_id
-    out_sample.mkdir(parents=True, exist_ok=True)
-    graph_dir = out_sample / "graphs"
+    out_video_dir.mkdir(parents=True, exist_ok=True)
+    graph_dir = out_video_dir / "graphs"
 
     df = analyze_video(video_path, model_complexity=model_complexity)
 
     # CSV 저장
-    csv_path = out_sample / f"{sample_id}_angles.csv"
+    csv_path = out_video_dir / f"{sample_id}_angles.csv"
     df.to_csv(csv_path, index=False)
     print(f"  CSV 저장: {csv_path.name}")
 
@@ -66,27 +64,40 @@ def main():
         print(f"[ERROR] 입력 디렉토리가 없습니다: {input_dir}")
         sys.exit(1)
 
-    video_files = sorted(
-        p for p in input_dir.iterdir()
-        if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS
-    )
+    # input/gbXX/ 폴더들을 순회
+    subject_dirs = sorted(p for p in input_dir.iterdir() if p.is_dir())
 
-    if not video_files:
-        print(f"[ERROR] 입력 디렉토리에 영상 파일이 없습니다: {input_dir}")
+    if not subject_dirs:
+        print(f"[ERROR] 입력 디렉토리에 하위 폴더가 없습니다: {input_dir}")
+        sys.exit(1)
+
+    # 각 폴더 안의 영상 파일 수집: (video_path, out_video_dir) 쌍
+    tasks = []
+    for subject_dir in subject_dirs:
+        video_files = sorted(
+            p for p in subject_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS
+        )
+        for video_path in video_files:
+            out_video_dir = output_dir / subject_dir.name / video_path.stem
+            tasks.append((video_path, out_video_dir))
+
+    if not tasks:
+        print(f"[ERROR] 입력 하위 폴더에 영상 파일이 없습니다: {input_dir}")
         sys.exit(1)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"총 {len(video_files)}개 영상 처리 시작")
+    print(f"총 {len(tasks)}개 영상 처리 시작")
     print(f"입력: {input_dir}")
     print(f"출력: {output_dir}")
     print(f"모델 복잡도: {args.complexity}")
 
-    for video_path in video_files:
-        if args.only_new and is_done(video_path, output_dir):
+    for video_path, out_video_dir in tasks:
+        if args.only_new and is_done(video_path, out_video_dir):
             print(f"\n[{video_path.stem}] 결과물 존재 — 건너뜀")
             continue
-        process_video(video_path, output_dir, args.complexity)
+        process_video(video_path, out_video_dir, args.complexity)
 
     print("\n전체 처리 완료!")
 
