@@ -64,26 +64,26 @@ def main():
         print(f"[ERROR] 입력 디렉토리가 없습니다: {input_dir}")
         sys.exit(1)
 
-    # input/gbXX/ 폴더들을 순회
-    subject_dirs = sorted(p for p in input_dir.iterdir() if p.is_dir())
+    # input/best/, input/worst/ 클래스 폴더들을 순회
+    class_dirs = sorted(p for p in input_dir.iterdir() if p.is_dir())
 
-    if not subject_dirs:
+    if not class_dirs:
         print(f"[ERROR] 입력 디렉토리에 하위 폴더가 없습니다: {input_dir}")
         sys.exit(1)
 
-    # 각 폴더 안의 영상 파일 수집: (video_path, out_video_dir) 쌍
+    # 각 클래스 폴더 안의 영상 파일 수집: (video_path, out_video_dir) 쌍
     tasks = []
-    for subject_dir in subject_dirs:
+    for class_dir in class_dirs:
         video_files = sorted(
-            p for p in subject_dir.iterdir()
+            p for p in class_dir.iterdir()
             if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS
         )
         for video_path in video_files:
-            out_video_dir = output_dir / subject_dir.name / video_path.stem
+            out_video_dir = output_dir / class_dir.name / video_path.stem
             tasks.append((video_path, out_video_dir))
 
     if not tasks:
-        print(f"[ERROR] 입력 하위 폴더에 영상 파일이 없습니다: {input_dir}")
+        print(f"[ERROR] best/worst 폴더에 영상 파일이 없습니다: {input_dir}")
         sys.exit(1)
 
     output_dir.mkdir(parents=True, exist_ok=True)
