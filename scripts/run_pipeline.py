@@ -8,22 +8,30 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.video_analyzer import analyze_video
 from src.graph_plotter import plot_single_angle
+from src.skeleton_renderer import render_skeleton_video
+from src.optical_flow import render_optflow_video
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 
 
-def is_done(video_path: Path, out_video_dir: Path) -> bool:
-    """해당 영상의 결과물(CSV + 그래프 3개)이 이미 존재하는지 확인."""
+def is_done(video_path: Path, out_video_dir: Path, with_video: bool) -> bool:
+    """해당 영상의 결과물이 이미 존재하는지 확인."""
     sample_id = video_path.stem
     csv = out_video_dir / f"{sample_id}_angles.csv"
     graphs = [out_video_dir / "graphs" / f"{sample_id}_{angle}.png" for angle in ["alpha", "beta", "gamma"]]
-    return csv.exists() and all(g.exists() for g in graphs)
+    base_done = csv.exists() and all(g.exists() for g in graphs)
+    if not with_video:
+        return base_done
+    skeleton_mp4 = out_video_dir / f"{sample_id}_skeleton.mp4"
+    optflow_mp4  = out_video_dir / f"{sample_id}_optflow.mp4"
+    return base_done and skeleton_mp4.exists() and optflow_mp4.exists()
 
 
 def process_video(
     video_path: Path,
     out_video_dir: Path,
     model_complexity: int,
+    with_video: bool,
 ) -> None:
     sample_id = video_path.stem
     print(f"\n[{sample_id}] {video_path.name} 분석 중...")
@@ -44,6 +52,19 @@ def process_video(
         plot_single_angle(df, angle, sample_id, out_png)
         print(f"  그래프 저장: {out_png.name}")
 
+    if not with_video:
+        return
+
+    # Skeleton 영상 + 키포인트 좌표 획득
+    skeleton_path = out_video_dir / f"{sample_id}_skeleton.mp4"
+    frame_keypoints = render_skeleton_video(video_path, skeleton_path, model_complexity)
+    print(f"  Skeleton 영상 저장: {skeleton_path.name}")
+
+    # Optical Flow 영상
+    optflow_path = out_video_dir / f"{sample_id}_optflow.mp4"
+    render_optflow_video(video_path, optflow_path, frame_keypoints)
+    print(f"  Optical Flow 영상 저장: {optflow_path.name}")
+
 
 def main():
     parser = argparse.ArgumentParser(description="글루트 브릿지 영상 각도 분석 파이프라인")
@@ -55,6 +76,8 @@ def main():
                         help="MediaPipe 모델 복잡도 (0=빠름, 1=기본, 2=정확, 기본값: 1)")
     parser.add_argument("--only-new", action="store_true",
                         help="결과물이 이미 있는 영상은 건너뜀")
+    parser.add_argument("--no-video", action="store_true",
+                        help="skeleton/optical flow 영상 생성 건너뜀 (CSV + 그래프만)")
     args = parser.parse_args()
 
     input_dir = PROJECT_ROOT / args.input
@@ -88,16 +111,19 @@ def main():
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    with_video = not args.no_video
+
     print(f"총 {len(tasks)}개 영상 처리 시작")
     print(f"입력: {input_dir}")
     print(f"출력: {output_dir}")
     print(f"모델 복잡도: {args.complexity}")
+    print(f"영상 출력: {'OFF (--no-video)' if not with_video else 'ON (skeleton + optflow)'}")
 
     for video_path, out_video_dir in tasks:
-        if args.only_new and is_done(video_path, out_video_dir):
+        if args.only_new and is_done(video_path, out_video_dir, with_video):
             print(f"\n[{video_path.stem}] 결과물 존재 — 건너뜀")
             continue
-        process_video(video_path, out_video_dir, args.complexity)
+        process_video(video_path, out_video_dir, args.complexity, with_video)
 
     print("\n전체 처리 완료!")
 
