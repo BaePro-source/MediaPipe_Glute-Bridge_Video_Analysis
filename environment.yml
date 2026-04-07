@@ -1,20 +1,23 @@
 name: mediapipe_video
 channels:
-  - defaults
+  - pytorch
+  - nvidia
   - conda-forge
+  - defaults
+
 dependencies:
   - python=3.10
   - pip
+  - numpy=1.26.4
+  - pandas=2.2.3
+  - matplotlib=3.9.2
+  - tqdm=4.67.1
+  - scikit-learn=1.7.2
+  - pillow=12.1.1
+  - pytorch=2.5.1
+  - torchvision=0.20.1
+  - torchaudio=2.5.1
+  - pytorch-cuda=12.1
   - pip:
-    - mediapipe==0.10.14
-    - opencv-python==4.10.0.84
-    - numpy==1.26.4
-    - pandas==2.2.3
-    - matplotlib==3.9.2
-    - tqdm==4.67.1
-    # 머신러닝 실험 (experiments/)
-    # GPU 사용 시: https://pytorch.org 에서 CUDA 버전에 맞는 설치 명령 사용
-    - torch==2.11.0
-    - torchvision==0.26.0
-    - scikit-learn==1.7.2
-    - Pillow==12.1.1
+      - mediapipe==0.10.14
+      - opencv-python==4.10.0.84
