@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-from collections import deque
 from pathlib import Path
 from tqdm import tqdm
 
@@ -31,7 +30,6 @@ CONNECTIONS = [
     ("ANKLE", "FOOT_INDEX"),
 ]
 
-TRAIL_LENGTH = 20   # 궤적 표시 프레임 수
 MIN_FLOW_MAG = 1.5  # 화살표 표시 최소 이동량 (px)
 
 
@@ -44,17 +42,6 @@ def _draw_skeleton(frame: np.ndarray, kps: dict) -> None:
         color = KEYPOINT_COLORS.get(name, (255, 255, 255))
         cv2.circle(frame, pt, 6, color, -1, cv2.LINE_AA)
         cv2.circle(frame, pt, 6, (255, 255, 255), 1, cv2.LINE_AA)
-
-
-def _draw_trails(frame: np.ndarray, trails: dict) -> None:
-    """각 관절의 이동 궤적(trail)을 시간 흐름에 따라 페이드-인 선으로 그리기."""
-    for name, trail in trails.items():
-        pts = list(trail)
-        color = KEYPOINT_COLORS.get(name, (255, 255, 255))
-        for i in range(1, len(pts)):
-            alpha = i / len(pts)
-            c = tuple(int(ch * alpha) for ch in color)
-            cv2.line(frame, pts[i - 1], pts[i], c, 2, cv2.LINE_AA)
 
 
 def _draw_flow_arrows(
@@ -126,10 +113,6 @@ def render_optflow_video(
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
 
-    trails: dict[str, deque] = {
-        name: deque(maxlen=TRAIL_LENGTH) for name in KEYPOINT_COLORS
-    }
-
     prev_gray = None
     prev_kps = None
 
@@ -146,14 +129,6 @@ def render_optflow_video(
         curr_kps = frame_keypoints[frame_idx] if frame_idx < len(frame_keypoints) else None
 
         if curr_kps is not None:
-            # 궤적 업데이트
-            for name, pt in curr_kps.items():
-                if name in trails:
-                    trails[name].append(pt)
-
-            # 궤적 그리기
-            _draw_trails(annotated, trails)
-
             # optical flow 화살표
             if prev_gray is not None and prev_kps is not None:
                 _draw_flow_arrows(annotated, prev_kps, curr_kps, prev_gray, gray)
