@@ -9,6 +9,9 @@ __pycache__/
 .venv/
 *.egg-info/
 
+# 모델 체크포인트 (재실행으로 재생성 가능)
+checkpoints/
+
 # Jupyter
 .ipynb_checkpoints/
 
