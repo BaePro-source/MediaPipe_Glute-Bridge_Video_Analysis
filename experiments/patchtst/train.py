@@ -19,7 +19,7 @@ DEVICE     = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 EPOCHS     = 100
 BATCH_SIZE = 8
 LR         = 1e-3
-SEED       = 42
+SEED       = 30
 PATIENCE   = 15   # val macro-F1이 PATIENCE epoch 동안 개선 없으면 조기 종료
 
 CKPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'checkpoints')
