@@ -1,5 +1,5 @@
 """
-Multi-Modal Fusion Classifier — 4 Branch
+Multi-Modal Fusion Classifier — 5 Branch
 
 Branch 1 — Angle Transformer Encoder
     입력:  (batch, MAX_LEN, 3)
@@ -21,15 +21,21 @@ Branch 4 — Neural ODE Encoder
     구조:  GRU → h0 → odeint(rk4) t=0→1
     출력:  (batch, D_MODEL)
 
+Branch 5 — Graph ResNet34 Encoder
+    입력:  (batch, 3, H, W)   ← alpha/beta/gamma 그래프 이미지 3채널
+    구조:  ResNet34 (pretrained, head 제거) → Linear(512→D_MODEL)
+    출력:  (batch, D_MODEL)
+
 Fusion:
-    z = concat([z_angle, z_dense, z_sparse, z_ode])  (batch, D_MODEL*4=512)
-    → Linear(512→256) → GELU → Dropout
+    z = concat([z_angle, z_dense, z_sparse, z_ode, z_graph])  (batch, D_MODEL*5=640)
+    → Linear(640→256) → GELU → Dropout
     → Linear(256→64)  → GELU → Dropout
     → Linear(64→2)
 """
 import torch
 import torch.nn as nn
 from torchdiffeq import odeint
+from torchvision import models
 
 D_MODEL = 128
 
@@ -140,7 +146,24 @@ class NeuralODEEncoder(nn.Module):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Full Multi-Modal Classifier — 4 Branch Fusion
+# Branch 5 — Graph ResNet34 Encoder
+# ══════════════════════════════════════════════════════════════════════════════
+
+class GraphResNetEncoder(nn.Module):
+    def __init__(self, d_model=D_MODEL):
+        super().__init__()
+        backbone = models.resnet34(weights=models.ResNet34_Weights.IMAGENET1K_V1)
+        # classifier head(fc) 제거 → (B, 512, 1, 1) 출력
+        self.backbone = nn.Sequential(*list(backbone.children())[:-1])
+        self.proj     = nn.Linear(512, d_model)
+
+    def forward(self, x):
+        feat = self.backbone(x).flatten(1)   # (B, 512)
+        return self.proj(feat)               # (B, D_MODEL)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Full Multi-Modal Classifier — 5 Branch Fusion
 # ══════════════════════════════════════════════════════════════════════════════
 
 class MultiModalClassifier(nn.Module):
@@ -150,9 +173,10 @@ class MultiModalClassifier(nn.Module):
         self.dense_encoder  = FlowViTEncoder(d_model=d_model)   # Branch 2
         self.sparse_encoder = FlowViTEncoder(d_model=d_model)   # Branch 3 (별도 가중치)
         self.ode_encoder    = NeuralODEEncoder(d_model=d_model, dropout=dropout)
+        self.graph_encoder  = GraphResNetEncoder(d_model=d_model)  # Branch 5
 
         self.classifier = nn.Sequential(
-            nn.Linear(d_model * 4, 256),   # 512 → 256
+            nn.Linear(d_model * 5, 256),   # 640 → 256
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(256, 64),
@@ -161,11 +185,12 @@ class MultiModalClassifier(nn.Module):
             nn.Linear(64, 2),
         )
 
-    def forward(self, angles, dense_frames, sparse_frames, kinematics):
+    def forward(self, angles, dense_frames, sparse_frames, kinematics, graph_img):
         z_angle  = self.angle_encoder(angles)           # (B, D)
         z_dense  = self.dense_encoder(dense_frames)     # (B, D)
         z_sparse = self.sparse_encoder(sparse_frames)   # (B, D)
         z_ode    = self.ode_encoder(kinematics)         # (B, D)
+        z_graph  = self.graph_encoder(graph_img)        # (B, D)
 
-        z = torch.cat([z_angle, z_dense, z_sparse, z_ode], dim=1)  # (B, D*4=512)
+        z = torch.cat([z_angle, z_dense, z_sparse, z_ode, z_graph], dim=1)  # (B, D*5=640)
         return self.classifier(z)

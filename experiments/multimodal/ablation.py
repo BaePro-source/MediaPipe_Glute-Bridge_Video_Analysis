@@ -2,11 +2,12 @@
 Branch Ablation Study — Leave-one-out (재학습 없음)
 
 조건 (fold마다):
-  all        : 4 branch 모두 사용 (baseline)
+  all        : 5 branch 모두 사용 (baseline)
   no_angle   : Angle Transformer 제거
   no_dense   : Dense Flow ViT 제거
   no_sparse  : Sparse Flow ViT 제거
   no_ode     : Neural ODE 제거
+  no_graph   : Graph ResNet34 제거
 
 실행:
   cd experiments
@@ -20,7 +21,7 @@ import torch
 from torch.utils.data import DataLoader
 from sklearn.metrics import f1_score, accuracy_score
 
-from data_utils import get_kfold_splits
+from data_utils import get_data_splits
 from dataset import MultiModalDataset
 from model import MultiModalClassifier
 
@@ -28,39 +29,43 @@ DEVICE     = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 CKPT_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'checkpoints')
 BATCH_SIZE = 4
 
-# (zero_angle, zero_dense, zero_sparse, zero_ode)
+# (zero_angle, zero_dense, zero_sparse, zero_ode, zero_graph)
 CONDITIONS = {
-    'all'      : (False, False, False, False),
-    'no_angle' : (True,  False, False, False),
-    'no_dense' : (False, True,  False, False),
-    'no_sparse': (False, False, True,  False),
-    'no_ode'   : (False, False, False, True),
+    'all'      : (False, False, False, False, False),
+    'no_angle' : (True,  False, False, False, False),
+    'no_dense' : (False, True,  False, False, False),
+    'no_sparse': (False, False, True,  False, False),
+    'no_ode'   : (False, False, False, True,  False),
+    'no_graph' : (False, False, False, False, True),
 }
 
 
 def evaluate(model, loader, zero_angle=False, zero_dense=False,
-             zero_sparse=False, zero_ode=False):
+             zero_sparse=False, zero_ode=False, zero_graph=False):
     model.eval()
     preds, labels = [], []
 
     with torch.no_grad():
-        for angles, dense_frames, sparse_frames, kine, y in loader:
-            angles       = angles.to(DEVICE)
-            dense_frames = dense_frames.to(DEVICE)
-            sparse_frames= sparse_frames.to(DEVICE)
-            kine         = kine.to(DEVICE)
+        for angles, dense_frames, sparse_frames, kine, graph_img, y in loader:
+            angles        = angles.to(DEVICE)
+            dense_frames  = dense_frames.to(DEVICE)
+            sparse_frames = sparse_frames.to(DEVICE)
+            kine          = kine.to(DEVICE)
+            graph_img     = graph_img.to(DEVICE)
 
             z_angle  = model.angle_encoder(angles)
             z_dense  = model.dense_encoder(dense_frames)
             z_sparse = model.sparse_encoder(sparse_frames)
             z_ode    = model.ode_encoder(kine)
+            z_graph  = model.graph_encoder(graph_img)
 
             if zero_angle:  z_angle  = torch.zeros_like(z_angle)
             if zero_dense:  z_dense  = torch.zeros_like(z_dense)
             if zero_sparse: z_sparse = torch.zeros_like(z_sparse)
             if zero_ode:    z_ode    = torch.zeros_like(z_ode)
+            if zero_graph:  z_graph  = torch.zeros_like(z_graph)
 
-            z      = torch.cat([z_angle, z_dense, z_sparse, z_ode], dim=1)
+            z      = torch.cat([z_angle, z_dense, z_sparse, z_ode, z_graph], dim=1)
             logits = model.classifier(z)
 
             preds.extend(logits.argmax(dim=1).cpu().tolist())
@@ -71,7 +76,7 @@ def evaluate(model, loader, zero_angle=False, zero_dense=False,
 
 
 def main():
-    splits       = get_kfold_splits()
+    splits, _    = get_data_splits()
     fold_results = {cond: {'f1': [], 'acc': []} for cond in CONDITIONS}
 
     for fold_idx, (train_subjects, val_subjects) in enumerate(splits):
@@ -80,7 +85,7 @@ def main():
             print(f"[Fold {fold_idx+1}] 체크포인트 없음 — 건너뜀")
             continue
 
-        print(f"\n=== Fold {fold_idx + 1}/5 ===")
+        print(f"\n=== Fold {fold_idx + 1}/10 ===")
 
         model = MultiModalClassifier().to(DEVICE)
         model.load_state_dict(torch.load(ckpt_path, map_location=DEVICE))
@@ -95,17 +100,17 @@ def main():
         val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False,
                                 num_workers=2, pin_memory=True)
 
-        for cond, (za, zd, zs, zo) in CONDITIONS.items():
+        for cond, (za, zd, zs, zo, zg) in CONDITIONS.items():
             f1, acc = evaluate(model, val_loader,
                                zero_angle=za, zero_dense=zd,
-                               zero_sparse=zs, zero_ode=zo)
+                               zero_sparse=zs, zero_ode=zo, zero_graph=zg)
             fold_results[cond]['f1'].append(f1)
             fold_results[cond]['acc'].append(acc)
             marker = '★' if cond == 'all' else ' '
             print(f"  {marker} {cond:12s} | F1: {f1:.4f}  Acc: {acc:.4f}")
 
     print("\n" + "=" * 58)
-    print("[Ablation] 5-Fold 평균 결과")
+    print("[Ablation] 10-Fold 평균 결과")
     print("=" * 58)
     print(f"  {'조건':<14} {'F1 (mean±std)':<26} {'Acc (mean±std)'}")
     print("-" * 58)

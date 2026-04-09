@@ -1,5 +1,5 @@
 """
-MultiModal Dataset — 4-Branch
+MultiModal Dataset — 5-Branch
 
 Branch 1 — Angle Transformer 입력:
     angles.csv → (T, 3) 정규화 후 MAX_LEN 패딩/절사
@@ -15,6 +15,10 @@ Branch 3 — Sparse Flow ViT 입력:
 Branch 4 — Neural ODE 입력:
     [위치=angles, 속도=Δangles, 가속도=ΔΔangles]
     → (T, 9) 정규화 후 MAX_LEN 패딩/절사
+
+Branch 5 — Graph ResNet34 입력:
+    alpha/beta/gamma 그래프 이미지를 grayscale → RGB 3채널 합성
+    → (3, IMG_SIZE, IMG_SIZE) ImageNet 정규화
 """
 import os
 import sys
@@ -25,8 +29,9 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
+from PIL import Image
 
-from data_utils import load_angles_csv
+from data_utils import load_angles_csv, get_graph_paths
 
 MAX_LEN  = 400
 K_FRAMES = 3
@@ -49,6 +54,20 @@ def _pad_or_crop(arr: np.ndarray, max_len: int) -> np.ndarray:
     return np.concatenate([arr, np.zeros((max_len - T, D), dtype=np.float32)], axis=0)
 
 
+_GRAPH_TRAIN_TRANSFORM = transforms.Compose([
+    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+    transforms.Normalize(_IMAGENET_MEAN, _IMAGENET_STD),
+])
+
+_GRAPH_VAL_TRANSFORM = transforms.Compose([
+    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    transforms.ToTensor(),
+    transforms.Normalize(_IMAGENET_MEAN, _IMAGENET_STD),
+])
+
+
 class MultiModalDataset(Dataset):
     def __init__(self, subjects, angle_stats=None, kine_stats=None, augment=False):
         """
@@ -57,8 +76,9 @@ class MultiModalDataset(Dataset):
         kine_stats  : (mean(9,), std(9,)) — None 이면 train 기준 계산
         augment     : True 이면 시계열 augmentation 적용 (train only)
         """
-        self.subjects = subjects
-        self.augment  = augment
+        self.subjects       = subjects
+        self.augment        = augment
+        self.graph_transform = _GRAPH_TRAIN_TRANSFORM if augment else _GRAPH_VAL_TRANSFORM
 
         self.img_transform = transforms.Compose([
             transforms.ToPILImage(),
@@ -129,6 +149,14 @@ class MultiModalDataset(Dataset):
     def __len__(self):
         return len(self.subjects)
 
+    def _load_graph_img(self, subject_path: str) -> torch.Tensor:
+        alpha_p, beta_p, gamma_p = get_graph_paths(subject_path)
+        alpha_img = Image.open(alpha_p).convert('L')
+        beta_img  = Image.open(beta_p).convert('L')
+        gamma_img = Image.open(gamma_p).convert('L')
+        img = Image.merge('RGB', [alpha_img, beta_img, gamma_img])
+        return self.graph_transform(img)   # (3, H, W)
+
     def __getitem__(self, idx):
         path, label = self.subjects[idx]
 
@@ -136,6 +164,7 @@ class MultiModalDataset(Dataset):
         dense_frames = self._load_video_frames(path, '_optflow_dense.mp4')   # (K, 3, H, W)
         sparse_frames= self._load_video_frames(path, '_optflow_sparse.mp4')  # (K, 3, H, W)
         kine_seq     = torch.from_numpy(self._load_kine_seq(path))           # (MAX_LEN, 9)
+        graph_img    = self._load_graph_img(path)                            # (3, H, W)
         y            = torch.tensor(label, dtype=torch.long)
 
-        return angle_seq, dense_frames, sparse_frames, kine_seq, y
+        return angle_seq, dense_frames, sparse_frames, kine_seq, graph_img, y

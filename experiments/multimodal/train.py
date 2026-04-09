@@ -1,5 +1,5 @@
 """
-Multi-Modal Fusion Classifier (4-Branch) — 5-Fold 학습
+Multi-Modal Fusion Classifier (5-Branch) — 10-Fold 학습
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from sklearn.metrics import f1_score, precision_score, recall_score, classification_report
 from sklearn.utils.class_weight import compute_class_weight
 
-from data_utils import get_kfold_splits
+from data_utils import get_data_splits
 from dataset import MultiModalDataset
 from model import MultiModalClassifier
 
@@ -35,7 +35,7 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark     = False
 
 
-def run_fold(fold_idx, train_subjects, val_subjects):
+def run_fold(fold_idx, train_subjects, val_subjects, test_subjects):
     os.makedirs(CKPT_DIR, exist_ok=True)
     ckpt_path = os.path.join(CKPT_DIR, f'fold{fold_idx + 1}_best.pt')
 
@@ -69,13 +69,14 @@ def run_fold(fold_idx, train_subjects, val_subjects):
         # ── Train ──────────────────────────────────────────────────────────────
         model.train()
         train_loss = 0.0
-        for angles, dense_frames, sparse_frames, kine, y in train_loader:
-            angles, dense_frames, sparse_frames, kine, y = (
+        for angles, dense_frames, sparse_frames, kine, graph_img, y in train_loader:
+            angles, dense_frames, sparse_frames, kine, graph_img, y = (
                 angles.to(DEVICE), dense_frames.to(DEVICE),
-                sparse_frames.to(DEVICE), kine.to(DEVICE), y.to(DEVICE)
+                sparse_frames.to(DEVICE), kine.to(DEVICE),
+                graph_img.to(DEVICE), y.to(DEVICE)
             )
             optimizer.zero_grad()
-            loss = criterion(model(angles, dense_frames, sparse_frames, kine), y)
+            loss = criterion(model(angles, dense_frames, sparse_frames, kine, graph_img), y)
             loss.backward()
             optimizer.step()
             train_loss += loss.item() * y.size(0)
@@ -85,12 +86,13 @@ def run_fold(fold_idx, train_subjects, val_subjects):
         model.eval()
         val_loss, all_preds, all_labels = 0.0, [], []
         with torch.no_grad():
-            for angles, dense_frames, sparse_frames, kine, y in val_loader:
-                angles, dense_frames, sparse_frames, kine, y = (
+            for angles, dense_frames, sparse_frames, kine, graph_img, y in val_loader:
+                angles, dense_frames, sparse_frames, kine, graph_img, y = (
                     angles.to(DEVICE), dense_frames.to(DEVICE),
-                    sparse_frames.to(DEVICE), kine.to(DEVICE), y.to(DEVICE)
+                    sparse_frames.to(DEVICE), kine.to(DEVICE),
+                    graph_img.to(DEVICE), y.to(DEVICE)
                 )
-                logits = model(angles, dense_frames, sparse_frames, kine)
+                logits = model(angles, dense_frames, sparse_frames, kine, graph_img)
                 val_loss += criterion(logits, y).item() * y.size(0)
                 all_preds.extend(logits.argmax(dim=1).cpu().tolist())
                 all_labels.extend(y.cpu().tolist())
@@ -128,16 +130,42 @@ def run_fold(fold_idx, train_subjects, val_subjects):
     model.eval()
     final_preds, final_labels = [], []
     with torch.no_grad():
-        for angles, dense_frames, sparse_frames, kine, y in val_loader:
-            angles, dense_frames, sparse_frames, kine = (
+        for angles, dense_frames, sparse_frames, kine, graph_img, y in val_loader:
+            angles, dense_frames, sparse_frames, kine, graph_img = (
                 angles.to(DEVICE), dense_frames.to(DEVICE),
-                sparse_frames.to(DEVICE), kine.to(DEVICE)
+                sparse_frames.to(DEVICE), kine.to(DEVICE), graph_img.to(DEVICE)
             )
-            final_preds.extend(model(angles, dense_frames, sparse_frames, kine)
+            final_preds.extend(model(angles, dense_frames, sparse_frames, kine, graph_img)
                                 .argmax(dim=1).cpu().tolist())
             final_labels.extend(y.tolist())
     print(classification_report(final_labels, final_preds,
                                 target_names=['worst', 'best'], zero_division=0))
+
+    # ── Test set 평가 ──────────────────────────────────────────────────────
+    test_ds = MultiModalDataset(
+        test_subjects,
+        angle_stats=(train_ds.angle_mean, train_ds.angle_std),
+        kine_stats =(train_ds.kine_mean,  train_ds.kine_std),
+        augment=False,
+    )
+    test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False,
+                             num_workers=2, pin_memory=True)
+    test_preds, test_labels_list = [], []
+    with torch.no_grad():
+        for angles, dense_frames, sparse_frames, kine, graph_img, y in test_loader:
+            angles, dense_frames, sparse_frames, kine, graph_img = (
+                angles.to(DEVICE), dense_frames.to(DEVICE),
+                sparse_frames.to(DEVICE), kine.to(DEVICE), graph_img.to(DEVICE)
+            )
+            test_preds.extend(model(angles, dense_frames, sparse_frames, kine, graph_img)
+                              .argmax(dim=1).cpu().tolist())
+            test_labels_list.extend(y.tolist())
+    test_acc = sum(p == l for p, l in zip(test_preds, test_labels_list)) / len(test_labels_list)
+    test_f1  = f1_score(test_labels_list, test_preds, average='macro', zero_division=0)
+    print(f"  [Test]  Acc:{test_acc:.4f}  F1:{test_f1:.4f}")
+
+    best_metrics['test_acc'] = test_acc
+    best_metrics['test_f1']  = test_f1
     return best_metrics
 
 
@@ -145,17 +173,22 @@ def main():
     set_seed(SEED)
     print(f"Device: {DEVICE}  |  Seed: {SEED}")
 
-    splits  = get_kfold_splits()
+    splits, test_subjects = get_data_splits(seed=SEED)
     results = []
 
     for fold_idx, (train_subjects, val_subjects) in enumerate(splits):
-        print(f"\n=== Fold {fold_idx + 1}/5 ===")
-        results.append(run_fold(fold_idx, train_subjects, val_subjects))
+        print(f"\n=== Fold {fold_idx + 1}/10 ===")
+        results.append(run_fold(fold_idx, train_subjects, val_subjects, test_subjects))
 
     print("\n" + "=" * 50)
-    print("[MultiModal 4-Branch] 5-Fold 결과 요약")
+    print("[MultiModal 5-Branch] 10-Fold 결과 요약")
     print("=" * 50)
     for key in ['acc', 'f1', 'precision', 'recall']:
+        vals = [r[key] for r in results]
+        print(f"  {key:10s}: {[round(v, 4) for v in vals]}  "
+              f"평균={np.mean(vals):.4f}  std={np.std(vals):.4f}")
+    print("\n[MultiModal 5-Branch] Test Set 결과 (각 fold best 모델)")
+    for key in ['test_acc', 'test_f1']:
         vals = [r[key] for r in results]
         print(f"  {key:10s}: {[round(v, 4) for v in vals]}  "
               f"평균={np.mean(vals):.4f}  std={np.std(vals):.4f}")
