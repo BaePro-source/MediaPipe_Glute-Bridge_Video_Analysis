@@ -9,7 +9,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.video_analyzer import analyze_video
 from src.graph_plotter import plot_single_angle
 from src.skeleton_renderer import render_skeleton_video
-from src.optical_flow import render_optflow_video
+from src.optical_flow import render_optflow_dense, render_optflow_sparse
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 
@@ -22,9 +22,10 @@ def is_done(video_path: Path, out_video_dir: Path, with_video: bool) -> bool:
     base_done = csv.exists() and all(g.exists() for g in graphs)
     if not with_video:
         return base_done
-    skeleton_mp4 = out_video_dir / f"{sample_id}_skeleton.mp4"
-    optflow_mp4  = out_video_dir / f"{sample_id}_optflow.mp4"
-    return base_done and skeleton_mp4.exists() and optflow_mp4.exists()
+    skeleton_mp4     = out_video_dir / f"{sample_id}_skeleton.mp4"
+    optflow_dense_mp4  = out_video_dir / f"{sample_id}_optflow_dense.mp4"
+    optflow_sparse_mp4 = out_video_dir / f"{sample_id}_optflow_sparse.mp4"
+    return base_done and skeleton_mp4.exists() and optflow_dense_mp4.exists() and optflow_sparse_mp4.exists()
 
 
 def process_video(
@@ -56,14 +57,19 @@ def process_video(
         return
 
     # Skeleton 영상 + 키포인트 좌표 획득
-    skeleton_path = out_video_dir / f"{sample_id}_skeleton.mp4"
+    skeleton_path   = out_video_dir / f"{sample_id}_skeleton.mp4"
     frame_keypoints = render_skeleton_video(video_path, skeleton_path, model_complexity)
     print(f"  Skeleton 영상 저장: {skeleton_path.name}")
 
-    # Optical Flow 영상
-    optflow_path = out_video_dir / f"{sample_id}_optflow.mp4"
-    render_optflow_video(video_path, optflow_path, frame_keypoints)
-    print(f"  Optical Flow 영상 저장: {optflow_path.name}")
+    # Dense Optical Flow 영상 (Farneback + HSV)
+    dense_path = out_video_dir / f"{sample_id}_optflow_dense.mp4"
+    render_optflow_dense(video_path, dense_path, frame_keypoints)
+    print(f"  Dense Optical Flow 저장: {dense_path.name}")
+
+    # Sparse Optical Flow 영상 (LK 화살표)
+    sparse_path = out_video_dir / f"{sample_id}_optflow_sparse.mp4"
+    render_optflow_sparse(video_path, sparse_path, frame_keypoints)
+    print(f"  Sparse Optical Flow 저장: {sparse_path.name}")
 
 
 def main():

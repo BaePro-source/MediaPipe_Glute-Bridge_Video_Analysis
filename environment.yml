@@ -21,3 +21,4 @@ dependencies:
   - pip:
       - mediapipe==0.10.14
       - opencv-python==4.10.0.84
+      - torchdiffeq==0.2.5
