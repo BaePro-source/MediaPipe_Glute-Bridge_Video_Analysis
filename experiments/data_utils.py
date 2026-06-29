@@ -33,7 +33,7 @@ def get_all_subjects():
     return subjects
 
 
-def get_data_splits(n_folds=10, seed=42):
+def get_data_splits(n_folds=10, seed=30):
     """
     전체 데이터를 Train 70 / Test 30으로 분리 후
     Train 70개를 n_folds-Fold CV로 분할.

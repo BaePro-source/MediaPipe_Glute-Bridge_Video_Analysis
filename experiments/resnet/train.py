@@ -13,13 +13,13 @@ from sklearn.metrics import f1_score, precision_score, recall_score, classificat
 from sklearn.utils.class_weight import compute_class_weight
 from data_utils import get_data_splits
 from dataset import GraphImageDataset
-from model import build_resnet34
+from model import build_resnet152
 
 DEVICE     = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 EPOCHS     = 50
 BATCH_SIZE = 8
 LR         = 1e-4  # pretrained 모델은 낮은 LR
-SEED       = 30
+SEED       = 42
 PATIENCE   = 10   # val macro-F1이 PATIENCE epoch 동안 개선 없으면 조기 종료
 
 CKPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'checkpoints')
@@ -50,7 +50,7 @@ def run_fold(fold_idx, train_subjects, val_subjects, test_subjects):
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,  drop_last=False)
     val_loader   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False)
 
-    model     = build_resnet34(pretrained=True).to(DEVICE)
+    model     = build_resnet152(pretrained=True).to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
@@ -161,12 +161,12 @@ def main():
         results.append(metrics)
 
     print("\n" + "="*40)
-    print("[ResNet34] 10-Fold 결과")
+    print("[ResNet152] 10-Fold 결과")
     for key in ['acc', 'f1', 'precision', 'recall']:
         vals = [r[key] for r in results]
         print(f"  {key:10s}: {[round(v, 4) for v in vals]}  "
               f"평균={np.mean(vals):.4f}  std={np.std(vals):.4f}")
-    print("\n[ResNet34] Test Set 결과 (각 fold best 모델)")
+    print("\n[ResNet152] Test Set 결과 (각 fold best 모델)")
     for key in ['test_acc', 'test_f1']:
         vals = [r[key] for r in results]
         print(f"  {key:10s}: {[round(v, 4) for v in vals]}  "

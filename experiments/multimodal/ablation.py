@@ -26,7 +26,7 @@ from dataset import MultiModalDataset
 from model import MultiModalClassifier
 
 DEVICE     = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-CKPT_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'checkpoints')
+CKPT_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'checkpoints_no_branch_weights')
 BATCH_SIZE = 4
 
 # (zero_angle, zero_dense, zero_sparse, zero_ode, zero_graph)
@@ -65,7 +65,7 @@ def evaluate(model, loader, zero_angle=False, zero_dense=False,
             if zero_ode:    z_ode    = torch.zeros_like(z_ode)
             if zero_graph:  z_graph  = torch.zeros_like(z_graph)
 
-            z      = torch.cat([z_angle, z_dense, z_sparse, z_ode, z_graph], dim=1)
+            z      = z_angle + z_dense + z_sparse + z_ode + z_graph
             logits = model.classifier(z)
 
             preds.extend(logits.argmax(dim=1).cpu().tolist())
@@ -76,7 +76,7 @@ def evaluate(model, loader, zero_angle=False, zero_dense=False,
 
 
 def main():
-    splits, _    = get_data_splits()
+    splits, test_subjects = get_data_splits(seed=42)
     fold_results = {cond: {'f1': [], 'acc': []} for cond in CONDITIONS}
 
     for fold_idx, (train_subjects, val_subjects) in enumerate(splits):
@@ -87,21 +87,20 @@ def main():
 
         print(f"\n=== Fold {fold_idx + 1}/10 ===")
 
-        model = MultiModalClassifier().to(DEVICE)
+        model = MultiModalClassifier(use_branch_weights=False).to(DEVICE)
         model.load_state_dict(torch.load(ckpt_path, map_location=DEVICE))
 
-        train_ds = MultiModalDataset(train_subjects, augment=False)
-        val_ds   = MultiModalDataset(
-            val_subjects,
+        train_ds  = MultiModalDataset(train_subjects, augment=False)
+        test_ds   = MultiModalDataset(
+            test_subjects,
             angle_stats=(train_ds.angle_mean, train_ds.angle_std),
-            kine_stats =(train_ds.kine_mean,  train_ds.kine_std),
             augment=False,
         )
-        val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False,
-                                num_workers=2, pin_memory=True)
+        test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False,
+                                 num_workers=2, pin_memory=True)
 
         for cond, (za, zd, zs, zo, zg) in CONDITIONS.items():
-            f1, acc = evaluate(model, val_loader,
+            f1, acc = evaluate(model, test_loader,
                                zero_angle=za, zero_dense=zd,
                                zero_sparse=zs, zero_ode=zo, zero_graph=zg)
             fold_results[cond]['f1'].append(f1)

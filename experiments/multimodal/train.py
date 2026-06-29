@@ -20,10 +20,10 @@ DEVICE     = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 EPOCHS     = 100
 BATCH_SIZE = 4
 LR         = 1e-3
-SEED       = 30
+SEED       = 42
 PATIENCE   = 15
 
-CKPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'checkpoints')
+CKPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'checkpoints_no_branch_weights')
 
 
 def set_seed(seed):
@@ -48,7 +48,6 @@ def run_fold(fold_idx, train_subjects, val_subjects, test_subjects):
     val_ds   = MultiModalDataset(
         val_subjects,
         angle_stats=(train_ds.angle_mean, train_ds.angle_std),
-        kine_stats =(train_ds.kine_mean,  train_ds.kine_std),
         augment=False,
     )
 
@@ -57,7 +56,7 @@ def run_fold(fold_idx, train_subjects, val_subjects, test_subjects):
     val_loader   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False,
                               num_workers=2, pin_memory=True)
 
-    model     = MultiModalClassifier().to(DEVICE)
+    model     = MultiModalClassifier(use_branch_weights=False).to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
@@ -145,7 +144,6 @@ def run_fold(fold_idx, train_subjects, val_subjects, test_subjects):
     test_ds = MultiModalDataset(
         test_subjects,
         angle_stats=(train_ds.angle_mean, train_ds.angle_std),
-        kine_stats =(train_ds.kine_mean,  train_ds.kine_std),
         augment=False,
     )
     test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False,

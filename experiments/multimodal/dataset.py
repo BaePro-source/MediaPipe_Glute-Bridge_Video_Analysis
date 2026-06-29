@@ -13,10 +13,9 @@ Branch 3 — Sparse Flow ViT 입력:
     → (K, 3, IMG_SIZE, IMG_SIZE) ImageNet 정규화
 
 Branch 4 — Neural ODE 입력:
-    [위치=angles, 속도=Δangles, 가속도=ΔΔangles]
-    → (T, 9) 정규화 후 MAX_LEN 패딩/절사
+    angles.csv → (T, 3) 정규화 후 MAX_LEN 패딩/절사
 
-Branch 5 — Graph ResNet34 입력:
+Branch 5 — Graph ResNet152 입력:
     alpha/beta/gamma 그래프 이미지를 grayscale → RGB 3채널 합성
     → (3, IMG_SIZE, IMG_SIZE) ImageNet 정규화
 """
@@ -42,9 +41,8 @@ _IMAGENET_STD  = [0.229, 0.224, 0.225]
 
 
 def _compute_kinematics(angles: np.ndarray) -> np.ndarray:
-    vel = np.diff(angles, axis=0, prepend=angles[:1])
-    acc = np.diff(vel,    axis=0, prepend=vel[:1])
-    return np.concatenate([angles, vel, acc], axis=1).astype(np.float32)
+    # 각도(위치)만 반환 — 속도/가속도는 NeuralODE가 dh/dt로 스스로 학습
+    return angles.astype(np.float32)
 
 
 def _pad_or_crop(arr: np.ndarray, max_len: int) -> np.ndarray:
@@ -56,7 +54,6 @@ def _pad_or_crop(arr: np.ndarray, max_len: int) -> np.ndarray:
 
 _GRAPH_TRAIN_TRANSFORM = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     transforms.Normalize(_IMAGENET_MEAN, _IMAGENET_STD),
 ])
@@ -69,11 +66,10 @@ _GRAPH_VAL_TRANSFORM = transforms.Compose([
 
 
 class MultiModalDataset(Dataset):
-    def __init__(self, subjects, angle_stats=None, kine_stats=None, augment=False):
+    def __init__(self, subjects, angle_stats=None, augment=False):
         """
         subjects    : list of (subject_dir_path, label)
         angle_stats : (mean(3,), std(3,)) — None 이면 train 기준 계산
-        kine_stats  : (mean(9,), std(9,)) — None 이면 train 기준 계산
         augment     : True 이면 시계열 augmentation 적용 (train only)
         """
         self.subjects       = subjects
@@ -95,13 +91,9 @@ class MultiModalDataset(Dataset):
         else:
             self.angle_mean, self.angle_std = angle_stats
 
-        if kine_stats is None:
-            all_kine = np.concatenate(
-                [_compute_kinematics(load_angles_csv(p)) for p, _ in subjects], axis=0)
-            self.kine_mean = all_kine.mean(axis=0)
-            self.kine_std  = all_kine.std(axis=0) + 1e-8
-        else:
-            self.kine_mean, self.kine_std = kine_stats
+        # kine 입력이 angles와 동일해졌으므로 같은 통계값 재사용
+        self.kine_mean = self.angle_mean
+        self.kine_std  = self.angle_std
 
     # ── 내부 로더 ──────────────────────────────────────────────────────────────
 
@@ -153,7 +145,7 @@ class MultiModalDataset(Dataset):
         alpha_p, beta_p, gamma_p = get_graph_paths(subject_path)
         alpha_img = Image.open(alpha_p).convert('L')
         beta_img  = Image.open(beta_p).convert('L')
-        gamma_img = Image.open(gamma_p).convert('L')
+        gamma_img = Image.open(gamma_p).convert('L')    
         img = Image.merge('RGB', [alpha_img, beta_img, gamma_img])
         return self.graph_transform(img)   # (3, H, W)
 
@@ -163,7 +155,7 @@ class MultiModalDataset(Dataset):
         angle_seq    = torch.from_numpy(self._load_angle_seq(path))          # (MAX_LEN, 3)
         dense_frames = self._load_video_frames(path, '_optflow_dense.mp4')   # (K, 3, H, W)
         sparse_frames= self._load_video_frames(path, '_optflow_sparse.mp4')  # (K, 3, H, W)
-        kine_seq     = torch.from_numpy(self._load_kine_seq(path))           # (MAX_LEN, 9)
+        kine_seq     = torch.from_numpy(self._load_kine_seq(path))           # (MAX_LEN, 3)
         graph_img    = self._load_graph_img(path)                            # (3, H, W)
         y            = torch.tensor(label, dtype=torch.long)
 

@@ -1,37 +1,3 @@
-"""
-Multi-Modal Fusion Classifier — 5 Branch
-
-Branch 1 — Angle Transformer Encoder
-    입력:  (batch, MAX_LEN, 3)
-    구조:  Linear proj → CLS token → Positional Embed → TransformerEncoder
-    출력:  (batch, D_MODEL)
-
-Branch 2 — Dense Flow ViT Encoder
-    입력:  (batch, K, 3, H, W)   ← _optflow_dense.mp4 프레임
-    구조:  Conv2d patch embed → CLS token → TransformerEncoder → K프레임 평균
-    출력:  (batch, D_MODEL)
-
-Branch 3 — Sparse Flow ViT Encoder
-    입력:  (batch, K, 3, H, W)   ← _optflow_sparse.mp4 프레임
-    구조:  Branch 2와 동일 구조, 별도 가중치
-    출력:  (batch, D_MODEL)
-
-Branch 4 — Neural ODE Encoder
-    입력:  (batch, MAX_LEN, 9)   [위치, 속도, 가속도]
-    구조:  GRU → h0 → odeint(rk4) t=0→1
-    출력:  (batch, D_MODEL)
-
-Branch 5 — Graph ResNet34 Encoder
-    입력:  (batch, 3, H, W)   ← alpha/beta/gamma 그래프 이미지 3채널
-    구조:  ResNet34 (pretrained, head 제거) → Linear(512→D_MODEL)
-    출력:  (batch, D_MODEL)
-
-Fusion:
-    z = concat([z_angle, z_dense, z_sparse, z_ode, z_graph])  (batch, D_MODEL*5=640)
-    → Linear(640→256) → GELU → Dropout
-    → Linear(256→64)  → GELU → Dropout
-    → Linear(64→2)
-"""
 import torch
 import torch.nn as nn
 from torchdiffeq import odeint
@@ -130,7 +96,7 @@ class ODEFunc(nn.Module):
 
 
 class NeuralODEEncoder(nn.Module):
-    def __init__(self, input_size=9, d_model=D_MODEL, dropout=0.1):
+    def __init__(self, input_size=3, d_model=D_MODEL, dropout=0.1):
         super().__init__()
         self.gru      = nn.GRU(input_size, d_model, num_layers=1, batch_first=True)
         self.ode_func = ODEFunc(d_model)
@@ -146,16 +112,16 @@ class NeuralODEEncoder(nn.Module):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Branch 5 — Graph ResNet34 Encoder
+# Branch 5 — Graph ResNet152 Encoder
 # ══════════════════════════════════════════════════════════════════════════════
 
 class GraphResNetEncoder(nn.Module):
     def __init__(self, d_model=D_MODEL):
         super().__init__()
-        backbone = models.resnet34(weights=models.ResNet34_Weights.IMAGENET1K_V1)
-        # classifier head(fc) 제거 → (B, 512, 1, 1) 출력
+        backbone = models.resnet152(weights=models.ResNet152_Weights.IMAGENET1K_V1)
+        # classifier head(fc) 제거 → (B, 2048, 1, 1) 출력
         self.backbone = nn.Sequential(*list(backbone.children())[:-1])
-        self.proj     = nn.Linear(512, d_model)
+        self.proj     = nn.Linear(2048, d_model)
 
     def forward(self, x):
         feat = self.backbone(x).flatten(1)   # (B, 512)
@@ -167,16 +133,21 @@ class GraphResNetEncoder(nn.Module):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class MultiModalClassifier(nn.Module):
-    def __init__(self, d_model=D_MODEL, dropout=0.1):
+    def __init__(self, d_model=D_MODEL, dropout=0.1, use_branch_weights=True):
         super().__init__()
+        self.use_branch_weights = use_branch_weights
         self.angle_encoder  = AngleTransformerEncoder(d_model=d_model)
         self.dense_encoder  = FlowViTEncoder(d_model=d_model)   # Branch 2
         self.sparse_encoder = FlowViTEncoder(d_model=d_model)   # Branch 3 (별도 가중치)
         self.ode_encoder    = NeuralODEEncoder(d_model=d_model, dropout=dropout)
         self.graph_encoder  = GraphResNetEncoder(d_model=d_model)  # Branch 5
 
+        if use_branch_weights:
+            # 학습 가능한 branch 가중치 (angle, dense, sparse, ode, graph)
+            self.branch_weights = nn.Parameter(torch.ones(5))
+
         self.classifier = nn.Sequential(
-            nn.Linear(d_model * 5, 256),   # 640 → 256
+            nn.Linear(d_model, 256),   # 128 → 256
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(256, 64),
@@ -192,5 +163,10 @@ class MultiModalClassifier(nn.Module):
         z_ode    = self.ode_encoder(kinematics)         # (B, D)
         z_graph  = self.graph_encoder(graph_img)        # (B, D)
 
-        z = torch.cat([z_angle, z_dense, z_sparse, z_ode, z_graph], dim=1)  # (B, D*5=640)
+        if self.use_branch_weights:
+            w = torch.softmax(self.branch_weights, dim=0)  # (5,) 합이 1
+            z = (w[0] * z_angle + w[1] * z_dense + w[2] * z_sparse
+                 + w[3] * z_ode  + w[4] * z_graph)
+        else:
+            z = z_angle + z_dense + z_sparse + z_ode + z_graph  # (B, D)
         return self.classifier(z)
